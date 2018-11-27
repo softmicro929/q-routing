@@ -17,6 +17,14 @@ events = 0
 
 
 # /* Event structure. */
+# 分别是：
+# 目的节点
+# 源节点
+# 当前节点
+# 包的创建时间
+# 跳数
+# When removed.
+# When inserted.
 class event:
     def __init__(self, time, dest):
         # /* Initialize new event. */
@@ -36,6 +44,8 @@ END_SIM = -3
 UNKNOWN = -4
 
 # /* Define. */
+# 空event list
+
 NIL = Nil = -1
 
 
@@ -49,9 +59,9 @@ class NetworkSimulatorEnv(gym.Env):
         self.success_count = 0
         self.nnodes = 0
         self.nedges = 0
-        self.enqueued = {}
-        self.nenqueued = {}
-        self.interqueuen = []
+        self.enqueued = {} # Time of last in line.
+        self.nenqueued = {} # How many in queue?
+        self.interqueuen = [] #Initialized to interqueue.
         self.event_queue = []  # Q.PriorityQueue()
         self.nlinks = {}
         self.links = collections.defaultdict(dict)
@@ -59,8 +69,8 @@ class NetworkSimulatorEnv(gym.Env):
         self.routed_packets = 0
         self.total_hops = 0
         self.current_event = event(0.0, 0)  # do I need to do this?
-        self.internode = 1.0
-        self.interqueue = 1.0
+        self.internode = 1.0  # Time in transit.
+        self.interqueue = 1.0  # Time between handlings. (init)
         self.active_packets = 0
         self.queuelimit = 100
         self.send_fail = 0
@@ -99,9 +109,11 @@ class NetworkSimulatorEnv(gym.Env):
         current_time = current_event.etime
         current_node = current_event.node
 
+        # node A --> node B: 当前时间（已经在B了）-路上的transit时间internode - 之前入队（A）的时间，就是在队列（A）中等待排队的时间
         time_in_queue = current_time - current_event.qtime - self.internode
 
         # if the link wasnt good
+        # link是个dict，key=node, value 是对应的action
         if action < 0 or action not in self.links[current_node]:
             next_node = current_node
 
@@ -109,6 +121,7 @@ class NetworkSimulatorEnv(gym.Env):
             next_node = self.links[current_node][action]
         # handle the case where next_node is your destination
         if next_node == current_event.dest:
+            # reward = 排队的时间 + 节点间transit的时间
             reward = time_in_queue + self.internode  # possibly change? totally random currently
 
             self.routed_packets += 1
@@ -118,6 +131,7 @@ class NetworkSimulatorEnv(gym.Env):
 
             self.active_packets -= 1
 
+            # 这个 packet 到了目的地以后，重新产生一个新 packet，get_new_packet_bump()
             self.current_event = self.get_new_packet_bump()
 
             if self.current_event == NIL:
@@ -129,28 +143,34 @@ class NetworkSimulatorEnv(gym.Env):
 
         else:
             # #if the queue is full at the next node, set destination to self
+            # 队列满了，就失败了
             if self.nenqueued[next_node] >= self.queuelimit:
                 self.send_fail = self.send_fail + 1
                 next_node = current_node
 
             reward = time_in_queue + self.internode
 
+            # do send. 把当前状态指向采取action后的节点上
             current_event.node = next_node  # do the send!
             current_event.hops += 1
             next_time = max(self.enqueued[next_node] + self.interqueuen[next_node],
                             current_time + self.internode)  # change this to nexttime = Max(enqueued[n_to]+interqueuen[n_to], curtime+internode); eventually
             current_event.etime = next_time
+            # enqueue 是排队时间
             self.enqueued[next_node] = next_time
 
+            # 入队时间，就是当前时间
             current_event.qtime = current_time
             if type(current_event) == int:
                 print("this is current_event:{}".format(current_event))
             heapq.heappush(self.event_queue, ((current_time + 1.0, -self.events), current_event))
             self.events += 1
 
+            # 这里应该是更新下队列状态
             self.nenqueued[next_node] += 1
             self.nenqueued[current_node] -= 1
 
+            # ??? 这里没有到终点，为什么重新发射一个包(不是的，上面刚把current_event塞进队列里，这里发射包的函数里，只是要把它弹出来，除非current_event的状态是current_event.source == INJECT，才会start new packet)
             self.current_event = self.get_new_packet_bump()
 
             if self.current_event == NIL:
@@ -166,6 +186,7 @@ class NetworkSimulatorEnv(gym.Env):
         self.shortest = np.zeros((self.nnodes, self.nnodes))
         self.compute_best()
         self.done = False
+        # 每个node都初始化queue 为 1
         self.interqueuen = [self.interqueue] * self.nnodes
 
         self.event_queue = []  # Q.PriorityQueue()
@@ -176,6 +197,7 @@ class NetworkSimulatorEnv(gym.Env):
 
         inject_event = event(0.0, 0)
         inject_event.source = INJECT
+        # call mean 应该就是负载的意思 network load
         if self.callmean == 1.0:
             inject_event.etime = -math.log(random.random())
         else:
@@ -194,6 +216,8 @@ class NetworkSimulatorEnv(gym.Env):
 
     ###########helper functions############################
     # Initializes a packet from a random source to a random destination
+
+    # 构建graph：
     def readin_graph(self):
         self.nnodes = 0
         self.nedges = 0
@@ -220,6 +244,7 @@ class NetworkSimulatorEnv(gym.Env):
 
                 self.nedges = self.nedges + 1
 
+    # 创建一个 packet ，指定source 和 dest ，并且把它放入 source 的 queue 里
     def start_packet(self, time):
         source = np.random.random_integers(0, self.nnodes - 1)
         dest = np.random.random_integers(0, self.nnodes - 1)
@@ -236,11 +261,13 @@ class NetworkSimulatorEnv(gym.Env):
         self.nenqueued[source] = self.nenqueued[source] + 1
 
         self.active_packets = self.active_packets + 1
+        #初始化这个包，源地址，目的地址，当前节点点指好。
         current_event = event(time, dest)
         current_event.source = current_event.node = source
 
         return current_event
 
+    # 发射一个packet？从heapq里取出顶上的event，然后 Lets a node process one packet.
     def get_new_packet_bump(self):
 
         current_event = heapq.heappop(self.event_queue)[1]
@@ -265,16 +292,18 @@ class NetworkSimulatorEnv(gym.Env):
             current_event = heapq.heappop(self.event_queue)[1]
         return current_event
 
+    # Pretend to send node's packet over given link.
     def pseudostep(self, action):
 
         current_event = self.current_event
         current_time = self.current_event.etime
         current_node = self.current_event.node
-
+        # 当前时间-入队时间-transit(中转)时间
         time_in_queue = current_time - current_event.qtime - self.internode
-
+        # reward = 队列的排队时间 + 中转时间
         reward = time_in_queue + self.internode
 
+        # 没有这个连接
         # if the link wasnt good
         if action < 0 or action not in self.links[current_node]:
             return reward, (current_node, current_event.dest)
@@ -306,6 +335,8 @@ class NetworkSimulatorEnv(gym.Env):
                     # /* Update our estimate of distance for sending from i to j. */
                     if i != j:
                         for k in range(self.nlinks[i]):
+                            # 如果i,j的距离 > i 的邻居点，j的距离 + 1，说明距离还没稳定，继续调整
+                            # shortest[i][j] 其实是i到j的最短路径的下一跳的link，走哪个link
                             if self.distance[i][j] > 1 + self.distance[self.links[i][k]][j]:
                                 self.distance[i][j] = 1 + self.distance[self.links[i][k]][j]  # /* Better. */
                                 self.shortest[i][j] = k

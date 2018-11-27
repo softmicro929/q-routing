@@ -15,15 +15,27 @@ class networkTabularQAgent(object):
             "eps": 0.1,            # Epsilon in epsilon greedy policies
             "discount": 1,
             "n_iter": 10000000}        # Number of iterations
+
+        # q表的大小是 (node_num*node_nums, num_actions)
+        #       act1 | act2 | act3 ...
+        #------------------------------
+        # 0,0 |  1   |  2   |  3  |  .
+        # 0,1 |      |      |     |
+        # 0,2 |      |      |     |
+        # 1,0 |      |      |     |
+        # 1,1 |      |      |     |
+        # ... |      |      |     |
+        # 2,2 |      |      |     |
         self.q = np.zeros((num_nodes,num_nodes,num_actions))
 
+        # 做q表的初始化，
         for src in range(num_nodes):
             for dest in range(num_nodes):
                 for action in range(nlinks[src]):
                     self.q[src][dest][action] = distance[src][dest]
 
 
-
+    # 返回最大的 action 
     def act(self, state, nlinks,  best=False):
         n = state[0]
         dest = state[1]
@@ -49,6 +61,7 @@ class networkTabularQAgent(object):
         n_next = next_event[0]
         dest_next = next_event[1]
 
+        # 这里是遍历求个最大的q值，状态q[n_next][dest] 下哪个 action 的 q 值大
         future = self.q[n_next][dest][0]
         for link in range(nlinks[n_next]):
             if self.q[n_next][dest][link] < future:

@@ -17,6 +17,7 @@ def main():
         env = NetworkSimulatorEnv()
         state_pair = env._reset()
         env.callmean = callmean
+        # agent 的初始化
         agent = networkTabularQAgent(env.nnodes, env.nedges, env.distance, env.nlinks)
         done = False
         r_sum_random = r_sum_best = 0
@@ -29,10 +30,11 @@ def main():
                 n = current_state[0]
                 dest = current_state[1]
 
+                # 更新q值，假装执行了每个action，但没有走（更新状态），只更新了q表值
                 for action in range(env.nlinks[n]):
                     reward, next_state = env.pseudostep(action)
                     agent.learn(current_state, next_state, reward, action, done, env.nlinks)
-
+                # 这里才是act寻找选取最佳action，并step执行了这个action，更新自身状态
                 action = agent.act(current_state, env.nlinks)
                 state_pair, reward, done, _ = env._step(action)
 
@@ -48,6 +50,7 @@ def main():
                                 i, t, float(env.total_routing_time) / float(env.routed_packets),
                                 float(env.total_hops) / float(env.routed_packets), r_sum_random))
 
+                    # 更新state
                     current_state = state_pair[1]
                     n = current_state[0]
                     dest = current_state[1]
