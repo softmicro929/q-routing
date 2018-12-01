@@ -23,8 +23,8 @@ events = 0
 # 当前节点
 # 包的创建时间
 # 跳数
-# When removed.
-# When inserted.
+# When create.
+# When remove or insert.
 class event:
     def __init__(self, time, dest):
         # /* Initialize new event. */
@@ -33,7 +33,7 @@ class event:
         self.node = UNKNOWN
         self.birth = time
         self.hops = 0
-        self.etime = time
+        self.etime = time # 应该这样理解，处理它的时间，就是remove它的时间。这个时间是随着进行，慢慢变大的。确定！！！搞定
         self.qtime = time
 
 
@@ -81,7 +81,7 @@ class NetworkSimulatorEnv(gym.Env):
 
         self.next_dest = 0
         self.next_source = 0
-        self.injections = 0
+        self.injections = 0 # 注入包的数量
         self.queue_full = 0
 
         self.events = 0
@@ -106,10 +106,12 @@ class NetworkSimulatorEnv(gym.Env):
         # if(self.total_routing_time/self.routed_packets < 10): #totally random, need change
 
         current_event = self.current_event
+        # etime呢？？？ 这个event在被处理时的时间，也就是remove的时间
         current_time = current_event.etime
         current_node = current_event.node
 
         # node A --> node B: 当前时间（已经在B了）-路上的transit时间internode - 之前入队（A）的时间，就是在队列（A）中等待排队的时间
+        # current_time.etime是挪到B之后的时间，current_time.qtime是上次被挪的时间，
         time_in_queue = current_time - current_event.qtime - self.internode
 
         # if the link wasnt good
@@ -138,6 +140,7 @@ class NetworkSimulatorEnv(gym.Env):
                 return ((current_event.node, current_event.dest),
                         (current_event.node, current_event.dest)), reward, self.done, {}
             else:
+                # 当前处理过的（刚处理好），当前新指向的event
                 return ((current_event.node, current_event.dest),
                         (self.current_event.node, self.current_event.dest)), reward, self.done, {}
 
@@ -153,13 +156,16 @@ class NetworkSimulatorEnv(gym.Env):
             # do send. 把当前状态指向采取action后的节点上
             current_event.node = next_node  # do the send!
             current_event.hops += 1
+            # 这里考虑的是next_node的对列里如果刚进来包，那么你进来的时间就是队列里最新进来的时间+传输时间，否则就是current——time + 传输时间了
             next_time = max(self.enqueued[next_node] + self.interqueuen[next_node],
                             current_time + self.internode)  # change this to nexttime = Max(enqueued[n_to]+interqueuen[n_to], curtime+internode); eventually
+            # 这里更新时间了，哈哈哈，
+            # 不要纠结next_time, 反正next_time 就指向了current_time了。
             current_event.etime = next_time
-            # enqueue 是排队时间
+            # enqueue[node] 是 node上队列里packet最新入队的时间
             self.enqueued[next_node] = next_time
-
-            # 入队时间，就是当前时间
+            # 这个event被开始处理，说明这个event已经被执行了action，现在只是更新这个event的信息！！！那么current_time 就是这个event的包插到"next_node"（当前已经在next_node上了） 的时间
+            # 就是event被insert的时间，就是开始处理这个event的时间（应该是忽略了插入操作需要的时间，认为是0）
             current_event.qtime = current_time
             if type(current_event) == int:
                 print("this is current_event:{}".format(current_event))
@@ -171,8 +177,10 @@ class NetworkSimulatorEnv(gym.Env):
             self.nenqueued[current_node] -= 1
 
             # ??? 这里没有到终点，为什么重新发射一个包(不是的，上面刚把current_event塞进队列里，这里发射包的函数里，只是要把它弹出来，除非current_event的状态是current_event.source == INJECT，才会start new packet)
+            # 这里是重新开始处理一个event，刚才那个event已经处理完毕并放在了 heapq 内
             self.current_event = self.get_new_packet_bump()
 
+            # return state_pair 是个tuple，第一个放的是，state执行action后转移到的state， 第二个放的是当前待处理的event（event对列中，队顶的）。所以这俩可能是一个event，也可能不是
             if self.current_event == NIL:
                 return ((current_event.node, current_event.dest),
                         (current_event.node, current_event.dest)), reward, self.done, {}
@@ -218,6 +226,7 @@ class NetworkSimulatorEnv(gym.Env):
     # Initializes a packet from a random source to a random destination
 
     # 构建graph：
+    # nlinks是 {} , 里面是每个node的连接 {"1":[2,3,4], "2":[3,5], ... }
     def readin_graph(self):
         self.nnodes = 0
         self.nedges = 0
@@ -258,8 +267,10 @@ class NetworkSimulatorEnv(gym.Env):
             self.queue_full += 1
             return (Nil)
 
+        # source node 的队列里，包的数量+1
         self.nenqueued[source] = self.nenqueued[source] + 1
 
+        # 总的激活的 packet 数量+1
         self.active_packets = self.active_packets + 1
         #初始化这个包，源地址，目的地址，当前节点点指好。
         current_event = event(time, dest)
@@ -267,14 +278,16 @@ class NetworkSimulatorEnv(gym.Env):
 
         return current_event
 
-    # 发射一个packet？从heapq里取出顶上的event，然后 Lets a node process one packet.
+    # 发射一个packet？从heapq里取出顶上的event，然后 Lets a node process one packet. 其实是处理队顶上的event，这个event如果是刚注入，那么初始化他，否则，返回这个event
     def get_new_packet_bump(self):
 
         current_event = heapq.heappop(self.event_queue)[1]
+        #current_time 是 这个event入队的时间
         current_time = current_event.etime
 
         # make sure the event we're sending the state of back is not an injection
         while current_event.source == INJECT:
+            # 这里是模拟产生packet的时间，或者是加一个间隔
             if self.callmean == 1.0 or self.callmean == 0.0:
                 current_event.etime += -math.log(1 - random.random())
             else:

@@ -12,6 +12,7 @@ from agents.q_agent import networkTabularQAgent
 
 def main():
     callmean = 1.0
+    # 10 个epoch， 并且逐渐加大负载
     for i in range(10):
         callmean += 1.0
         env = NetworkSimulatorEnv()
@@ -36,6 +37,8 @@ def main():
                     agent.learn(current_state, next_state, reward, action, done, env.nlinks)
                 # 这里才是act寻找选取最佳action，并step执行了这个action，更新自身状态
                 action = agent.act(current_state, env.nlinks)
+
+                # state_pair 是个tuple，第一个放的是，state执行action后转移到的state， 第二个放的是当前待处理的event（event对列中，队顶的）。所以这俩可能是一个event，也可能不是
                 state_pair, reward, done, _ = env._step(action)
 
                 next_state = state_pair[0]

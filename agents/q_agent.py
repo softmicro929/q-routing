@@ -17,6 +17,7 @@ class networkTabularQAgent(object):
             "n_iter": 10000000}        # Number of iterations
 
         # q表的大小是 (node_num*node_nums, num_actions)
+        # 这里 actions 就是网络拓扑里所有的边 link
         #       act1 | act2 | act3 ...
         #------------------------------
         # 0,0 |  1   |  2   |  3  |  .
@@ -27,6 +28,8 @@ class networkTabularQAgent(object):
         # ... |      |      |     |
         # 2,2 |      |      |     |
         self.q = np.zeros((num_nodes,num_nodes,num_actions))
+
+        # 看下面这个初始化，结合nlinks，不是每个action都有值的，source出发，对应有link的才有值，并且 self.q[src][dest][action] = distance[src][dest]
 
         # 做q表的初始化，
         for src in range(num_nodes):
